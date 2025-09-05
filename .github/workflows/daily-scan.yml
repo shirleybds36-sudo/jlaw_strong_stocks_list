@@ -53,11 +53,12 @@ jobs:
             -w data/watchlist.txt \
             -o scan_outputs \
             -b SPY \
-            --rs_pctile_min 90 \
-            --near_52w_max_gap 0.15 \
-            --pivot_tight_max_range 0.06 \
-            --vol_contraction_max 0.0 \
-            --vol_dryup_max_ratio 0.8
+            --rs_pctile_min 85 \
+            --near_52w_max_gap 0.2 \
+            --pivot_tight_max_range 0.08 \
+            --vol_contraction_max 0.001 \
+            --vol_dryup_max_ratio 0.90
+
 
       - name: Upload artifacts (CSV)
         uses: actions/upload-artifact@v4
