@@ -2,41 +2,19 @@ name: Daily US Watchlist + JLaw Scanner
 
 on:
   schedule:
-    - cron: "0 15 * * *"   # 每天 15:00 UTC 触发
+    - cron: "0 15 * * *"      # 15:00 UTC (08:00 PT in DST)
   workflow_dispatch: {}
 
 permissions:
   contents: write
-  pull-requests: write   # (only needed if you later open PRs)
+  actions: read
 
 jobs:
-  build:
+  run:
     runs-on: ubuntu-latest
+    env:
+      TZ: America/Los_Angeles
     steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}   # default; gets the perms above
-
-      - name: Set git identity
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Generate CSVs
-        run: |
-          mkdir -p daily_csv
-          python scripts/generate_us_watchlist.py
-
-      - name: Commit files (if changed)
-        run: |
-          git add -A
-          git commit -m "Daily scan + watchlist ($(date -u +'%Y-%m-%d %H:%M UTC'))" || echo "Nothing to commit"
-
-      - name: Push
-        run: |
-          # push back to the same branch the workflow is running on
-          git push origin HEAD:${{ github.ref_name }}
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -50,10 +28,23 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # sanity check
+          python - <<'PY'
+          import importlib
+          for m in ["pandas","numpy","yfinance","lxml","requests"]:
+              importlib.import_module(m)
+          print("Deps OK")
+          PY
 
-      - name: Generate US initial watchlist
+      - name: Generate US initial watchlist (with retry)
         run: |
-          python scripts/generate_us_watchlist.py
+          set -e
+          for i in 1 2 3; do
+            python scripts/generate_us_watchlist.py && break || {
+              echo "Retry $i after 10s..."; sleep 10;
+            }
+          done
+          test -s data/watchlist.txt && head -n 5 data/watchlist.txt || (echo "watchlist empty"; exit 1)
 
       - name: Run JLaw scanner with generated watchlist
         run: |
@@ -73,26 +64,27 @@ jobs:
         with:
           name: scan-csv
           path: scan_outputs/*.csv
+          if-no-files-found: warn
           retention-days: 10
 
-      # 可选：提交 CSV 回仓库（便于历史回看）
       - name: Commit CSV back to repo
         if: ${{ success() && github.event_name != 'pull_request' }}
         run: |
           mkdir -p daily_csv
-          cp scan_outputs/*.csv daily_csv/
+          cp -f scan_outputs/*.csv daily_csv/ 2>/dev/null || true
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add daily_csv/*.csv data/watchlist.txt
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add daily_csv/*.csv data/watchlist.txt || true
           if ! git diff --cached --quiet; then
             git commit -m "Daily scan + watchlist ($(date +'%Y-%m-%d %H:%M %Z'))"
-            git push
+            git push origin HEAD:${{ github.ref_name }}
+          else
+            echo "No changes to commit."
           fi
 
-      # 可选：邮件发送（在仓库 Settings → Secrets 配置 SMTP）
       - name: Email results
-        if: ${{ success() }}
         uses: dawidd6/action-send-mail@v3
+        continue-on-error: true           # keep soft while testing; remove later
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
           server_port: ${{ secrets.SMTP_PORT }}
@@ -106,5 +98,4 @@ jobs:
             scan_outputs/*.csv
           body: |
             今日美股初选清单已生成并用于 JLaw 扫描。
-            附件包含：candidates / metrics_all CSV。
             生成时间：$(date +'%Y-%m-%d %H:%M %Z')
