@@ -1,0 +1,84 @@
+name: Daily US Watchlist + JLaw Scanner
+
+on:
+  schedule:
+    - cron: "0 15 * * *"   # 每天 15:00 UTC 触发
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      TZ: America/Los_Angeles  # 仅影响日志/时间戳显示
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate US initial watchlist
+        run: |
+          python scripts/generate_us_watchlist.py
+
+      - name: Run JLaw scanner with generated watchlist
+        run: |
+          mkdir -p scan_outputs
+          python jlaw_strong_stock_scanner.py \
+            -w data/watchlist.txt \
+            -o scan_outputs \
+            -b SPY \
+            --rs_pctile_min 90 \
+            --near_52w_max_gap 0.15 \
+            --pivot_tight_max_range 0.06 \
+            --vol_contraction_max 0.0 \
+            --vol_dryup_max_ratio 0.8
+
+      - name: Upload artifacts (CSV)
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-csv
+          path: scan_outputs/*.csv
+          retention-days: 10
+
+      # 可选：提交 CSV 回仓库（便于历史回看）
+      - name: Commit CSV back to repo
+        if: ${{ success() && github.event_name != 'pull_request' }}
+        run: |
+          mkdir -p daily_csv
+          cp scan_outputs/*.csv daily_csv/
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add daily_csv/*.csv data/watchlist.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Daily scan + watchlist ($(date +'%Y-%m-%d %H:%M %Z'))"
+            git push
+          fi
+
+      # 可选：邮件发送（在仓库 Settings → Secrets 配置 SMTP）
+      - name: Email results
+        if: ${{ success() }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "JLaw 美股候选清单 $(date +'%Y-%m-%d')"
+          from: ${{ secrets.MAIL_FROM }}
+          to: ${{ secrets.MAIL_TO }}
+          secure: true
+          attachments: |
+            scan_outputs/*.csv
+          body: |
+            今日美股初选清单已生成并用于 JLaw 扫描。
+            附件包含：candidates / metrics_all CSV。
+            生成时间：$(date +'%Y-%m-%d %H:%M %Z')
