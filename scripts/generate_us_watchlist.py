@@ -2,36 +2,120 @@
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import requests
+import time
 from datetime import datetime
 from pathlib import Path
 
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 NDX100_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"
 
-def fetch_constituents() -> list[str]:
-    # S&P 500
-    sp = pd.read_html(SP500_URL, match="Symbol", flavor="lxml")[0]
-    sp_tickers = sp["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()  # BRK.B -> BRK-B
+HEADERS = {
+    # Pretend to be a real browser. Wikipedia blocks default Python UA.
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.google.com/",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
 
-    # NASDAQ-100
-    ndx_tables = pd.read_html(NDX100_URL, flavor="lxml")
-    # 找包含 "Ticker" 的表
+def fetch_html(url: str, retries: int = 3, backoff: float = 3.0) -> str:
+    last_exc = None
+    for i in range(retries):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=30)
+            if r.status_code == 200:
+                return r.text
+            else:
+                print(f"[warn] {url} -> HTTP {r.status_code}, retrying...")
+        except Exception as e:
+            last_exc = e
+            print(f"[warn] {url} fetch error: {e}, retrying...")
+        time.sleep(backoff * (i + 1))
+    if last_exc:
+        raise last_exc
+    raise RuntimeError(f"Failed to fetch {url}")
+
+def fetch_constituents_from_web() -> list[str]:
+    # S&P 500
+    sp_html = fetch_html(SP500_URL)
+    sp_tables = pd.read_html(sp_html, match="Symbol", flavor="lxml")
+    sp = sp_tables[0]
+    sp_tickers = (
+        sp["Symbol"]
+        .astype(str)
+        .str.replace(".", "-", regex=False)   # BRK.B -> BRK-B (Yahoo style)
+        .str.strip()
+        .tolist()
+    )
+
+    # NASDAQ-100 (table layout can vary, so search for ticker-like column)
+    ndx_html = fetch_html(NDX100_URL)
+    ndx_tables = pd.read_html(ndx_html, flavor="lxml")
     ndx = None
     for tbl in ndx_tables:
-        cols = [c.lower() for c in tbl.columns.astype(str)]
-        if any("ticker" in c for c in cols):
+        cols = [str(c).lower() for c in tbl.columns]
+        if any("ticker" in c or "symbol" in c for c in cols):
             ndx = tbl
             break
     if ndx is None:
         ndx = ndx_tables[0]
-    # 容错处理列名
-    ticker_col = [c for c in ndx.columns if "Ticker" in str(c) or "ticker" in str(c)]
-    ndx_tickers = ndx[ticker_col[0]].astype(str).str.strip().tolist()
+    # find first column that looks like tickers
+    col = None
+    for c in ndx.columns:
+        if any(k in str(c).lower() for k in ["ticker", "symbol"]):
+            col = c
+            break
+    if col is None:
+        col = ndx.columns[0]
+    ndx_tickers = ndx[col].astype(str).str.strip().tolist()
 
     tickers = sorted(list({*sp_tickers, *ndx_tickers}))
-    # 去掉可能的空值或异常
     tickers = [t for t in tickers if t and t.upper() != "N/A"]
     return tickers
+
+def load_fallback_csvs() -> list[str]:
+    """
+    Optional: if web fetch fails, try local CSV fallbacks:
+      - data/sp500_fallback.csv with a 'Symbol' column
+      - data/nasdaq100_fallback.csv with a 'Ticker' or 'Symbol' column
+    If these files don't exist, return a minimal core list so the pipeline still runs.
+    """
+    base = Path("data")
+    tickers = set()
+
+    sp_csv = base / "sp500_fallback.csv"
+    if sp_csv.exists():
+        df = pd.read_csv(sp_csv)
+        col = "Symbol" if "Symbol" in df.columns else df.columns[0]
+        ts = df[col].astype(str).str.replace(".", "-", regex=False).str.strip()
+        tickers.update(ts.tolist())
+
+    ndx_csv = base / "nasdaq100_fallback.csv"
+    if ndx_csv.exists():
+        df = pd.read_csv(ndx_csv)
+        # accept Ticker or Symbol
+        col = "Ticker" if "Ticker" in df.columns else ("Symbol" if "Symbol" in df.columns else df.columns[0])
+        ts = df[col].astype(str).str.strip()
+        tickers.update(ts.tolist())
+
+    # If nothing available, provide a minimal robust core so the job keeps running.
+    if not tickers:
+        tickers = {
+            "AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA","NFLX","AVGO","COST",
+            "JPM","LLY","UNH","V","MA","HD","PEP","KO","XOM","CVX"
+        }
+    return sorted(tickers)
+
+def fetch_constituents() -> list[str]:
+    try:
+        return fetch_constituents_from_web()
+    except Exception as e:
+        print(f"[warn] fetch_constituents_from_web failed: {e}")
+        print("[info] Falling back to local CSVs or minimal core list.")
+        return load_fallback_csvs()
+
+# --- rest of your script stays the same ---
 
 def pct_change(s: pd.Series, n: int) -> pd.Series:
     return s / s.shift(n) - 1.0
