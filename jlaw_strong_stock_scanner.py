@@ -282,7 +282,7 @@ def run_scan(watchlist_file: str,
              pivot_tight_max_range: float = 0.06,
              vol_contraction_max: float = 0.0,
              vol_dryup_max_ratio: float = 0.8,
-             # NEW knobs for signals:
+             # signals/labels
              vol_breakout_mult: float = 1.5,
              near_trigger_pct: float = 0.02,
              breakout_confirm_on: str = "high",
@@ -290,15 +290,11 @@ def run_scan(watchlist_file: str,
 
     tickers = read_watchlist(watchlist_file)
     bench = benchmark.upper()
-    tickers_all = sorted(tickers + [bench]) if bench not in tickers else tickers
+    tickers_all = sorted(set(tickers + [bench]))
 
-    # ⬇️⬇️ REQUIRED: fetch prices into `data` before compute_metrics ⬇️⬇️
+    # 1) fetch + compute
     data = fetch_prices(tickers_all, period="420d", interval="1d")
-
-    # compute metrics for all names except the benchmark
     metrics, _ = compute_metrics(data, [t for t in tickers_all if t != bench], bench)
-
-    # first-stage strict filter (unchanged)
     cands = filter_candidates(metrics,
                               rs_pctile_min=rs_pctile_min,
                               near_52w_max_gap=near_52w_max_gap,
@@ -306,23 +302,29 @@ def run_scan(watchlist_file: str,
                               vol_contraction_max=vol_contraction_max,
                               vol_dryup_max_ratio=vol_dryup_max_ratio)
 
-    # --- Enrich candidates with over-line / volume flags and risk box ---
+    # 2) prepare outputs (define paths FIRST to avoid UnboundLocalError)
+    os.makedirs(out_dir, exist_ok=True)
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    all_path   = os.path.join(out_dir, f"metrics_all_{stamp}.csv")
+    cands_path = os.path.join(out_dir, f"candidates_{stamp}.csv")
+    brk_path   = os.path.join(out_dir, f"breakouts_{stamp}.csv")
+
+    # 3) write all metrics (even if empty)
+    metrics.to_csv(all_path, index=False)
+
+    # 4) enrich candidates + write
     if not cands.empty:
-        cands = cands.copy()
-        cands["trigger_price"] = cands["breakout_trigger"]
-        cands["stop_suggest"] = cands["pivot_low7"]
-        cands["risk_pct"] = (cands["trigger_price"] - cands["stop_suggest"]) / cands["trigger_price"]
-        cands["dist_to_trigger_pct"] = (cands["trigger_price"] - cands["last_close"]) / cands["trigger_price"]
+        c = cands.copy()
+        c["trigger_price"] = c["breakout_trigger"]
+        c["stop_suggest"]  = c["pivot_low7"]
+        c["risk_pct"] = (c["trigger_price"] - c["stop_suggest"]) / c["trigger_price"]
+        c["dist_to_trigger_pct"] = (c["trigger_price"] - c["last_close"]) / c["trigger_price"]
 
-        if breakout_confirm_on.lower() == "close":
-            cands["over_trigger"] = cands["over_trigger_close"]
-        else:
-            cands["over_trigger"] = cands["over_trigger_high"]
+        c["over_trigger"] = c["over_trigger_close"] if breakout_confirm_on.lower() == "close" else c["over_trigger_high"]
+        c["vol_surge_mult"] = c["vol_today"] / c["vol50_avg"]
+        c["vol_surge"] = c["vol_surge_mult"] >= vol_breakout_mult
 
-        cands["vol_surge_mult"] = cands["vol_today"] / cands["vol50_avg"]
-        cands["vol_surge"] = cands["vol_surge_mult"] >= vol_breakout_mult
-
-        def _signal_row(r):
+        def _signal(r):
             if r["over_trigger"] and r["vol_surge"]:
                 return "BREAKOUT_CONFIRMED"
             if r["over_trigger"] and not r["vol_surge"]:
@@ -331,9 +333,29 @@ def run_scan(watchlist_file: str,
                 return "WATCH_NEAR_TRIGGER"
             return "WATCH"
 
-        cands["signal"] = cands.apply(_signal_row, axis=1)
+        c["signal"] = c.apply(_signal, axis=1)
+        c.to_csv(cands_path, index=False)
 
-    guide_path = write_field_guide_csv(out_dir)
+        # confirmed breakouts
+        brk = c.loc[c["signal"] == "BREAKOUT_CONFIRMED"].copy()
+        if not brk.empty:
+            brk["max_entry_price"] = brk["trigger_price"] * (1.0 + entry_extension_pct)
+            brk["position_risk_$"] = brk["risk_pct"] * brk["last_close"]  # or use trigger-stop if you prefer
+            brk.to_csv(brk_path, index=False)
+        else:
+            c.head(0).to_csv(brk_path, index=False)  # empty header
+    else:
+        metrics.head(0).to_csv(cands_path, index=False)
+        metrics.head(0).to_csv(brk_path, index=False)
+
+    # 5) field guide (always produce)
+    try:
+        guide_path = write_field_guide_csv(out_dir)
+    except Exception:
+        guide_path = os.path.join(out_dir, "jlaw_scanner_metrics_field_guide.csv")
+        with open(guide_path, "w") as f:
+            f.write("metric,present_in,definition,formula_or_source,typical_thresholds,interpretation_and_usage\n")
+
     return {"all": all_path, "candidates": cands_path, "breakouts": brk_path, "field_guide": guide_path}
 
 
