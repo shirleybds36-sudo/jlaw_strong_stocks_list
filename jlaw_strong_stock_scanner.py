@@ -295,6 +295,22 @@ def run_scan(watchlist_file: str,
     # 1) fetch + compute
     data = fetch_prices(tickers_all, period="420d", interval="1d")
     metrics, _ = compute_metrics(data, [t for t in tickers_all if t != bench], bench)
+    # ---- NEW: universal risk/entry fields for metrics_all ----
+    metrics = metrics.copy()
+    metrics["trigger_price"] = metrics["breakout_trigger"]
+    metrics["stop_suggest"]  = metrics["pivot_low7"]
+
+    tp = metrics["trigger_price"]
+    st = metrics["stop_suggest"]
+    lc = metrics["last_close"]
+
+    # Guard against missing/invalid (e.g., stop >= trigger)
+    import numpy as np
+    metrics["risk_pct"] = np.where((tp > 0) & (tp > st), (tp - st) / tp, np.nan)
+    metrics["max_entry_price"] = tp * (1.0 + entry_extension_pct)
+    metrics["position_risk_$"] = metrics["risk_pct"] * lc
+    # ----------------------------------------------------------
+
     cands = filter_candidates(metrics,
                               rs_pctile_min=rs_pctile_min,
                               near_52w_max_gap=near_52w_max_gap,
@@ -323,6 +339,10 @@ def run_scan(watchlist_file: str,
         c["over_trigger"] = c["over_trigger_close"] if breakout_confirm_on.lower() == "close" else c["over_trigger_high"]
         c["vol_surge_mult"] = c["vol_today"] / c["vol50_avg"]
         c["vol_surge"] = c["vol_surge_mult"] >= vol_breakout_mult
+        # ---- NEW: show entry/risk fields on candidates too ----
+        c["max_entry_price"] = c["trigger_price"] * (1.0 + entry_extension_pct)
+        c["position_risk_$"] = c["risk_pct"] * c["last_close"]
+    # -------------------------------------------------------
 
         def _signal(r):
             if r["over_trigger"] and r["vol_surge"]:
