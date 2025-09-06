@@ -54,10 +54,13 @@ jobs:
             -o scan_outputs \
             -b SPY \
             --rs_pctile_min 85 \
-            --near_52w_max_gap 0.2 \
+            --near_52w_max_gap 0.20 \
             --pivot_tight_max_range 0.08 \
             --vol_contraction_max 0.001 \
-            --vol_dryup_max_ratio 0.90
+            --vol_dryup_max_ratio 0.90 \
+            --vol_breakout_mult 1.5 \
+            --near_trigger_pct 0.02 \
+            --breakout_confirm_on high
 
 
       - name: Upload artifacts (CSV)
