@@ -239,7 +239,8 @@ def run_scan(watchlist_file: str,
              # NEW knobs for signals:
              vol_breakout_mult: float = 1.5,
              near_trigger_pct: float = 0.02,
-             breakout_confirm_on: str = "high") -> Dict[str, str]:
+             breakout_confirm_on: str = "high",
+             entry_extension_pct: float = 0.02) -> Dict[str, str]:
 
     tickers = read_watchlist(watchlist_file)
     bench = benchmark.upper()
@@ -286,6 +287,7 @@ def run_scan(watchlist_file: str,
 
         cands["signal"] = cands.apply(_signal_row, axis=1)
 
+
     # --- outputs ---
     os.makedirs(out_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d")
@@ -295,9 +297,33 @@ def run_scan(watchlist_file: str,
 
     metrics.to_csv(all_path, index=False)
     (cands if not cands.empty else metrics.head(0)).to_csv(cands_path, index=False)
-    (cands.loc[cands["signal"] == "BREAKOUT_CONFIRMED"] if not cands.empty else metrics.head(0)).to_csv(brk_path, index=False)
+    # NEW: enrich and write confirmed breakouts
+    if not cands.empty:
+        confirmed = cands.loc[cands["signal"] == "BREAKOUT_CONFIRMED"].copy()
+        if not confirmed.empty:
+            confirmed["max_entry_price"] = confirmed["trigger_price"] * (1.0 + entry_extension_pct)
+            # As requested: per-share $ risk based on last_close × risk_pct
+            confirmed["position_risk_$"] = confirmed["risk_pct"] * confirmed["last_close"]
+
+            # (optional) nicer column order, only if columns exist
+            preferred = [
+                "ticker","last_close","trigger_price","max_entry_price",
+                "stop_suggest","risk_pct","position_risk_$",
+                "dist_to_trigger_pct","over_trigger","vol_surge","vol_surge_mult",
+                "rs_composite_pctile","near_52w_gap_pct","pivot_tight_range_pct","signal"
+            ]
+            confirmed = confirmed[[c for c in preferred if c in confirmed.columns] +
+                                  [c for c in confirmed.columns if c not in preferred]]
+
+            confirmed.to_csv(brk_path, index=False)
+        else:
+            metrics.head(0).to_csv(brk_path, index=False)  # empty header
+    else:
+        metrics.head(0).to_csv(brk_path, index=False)
+
 
     return {"all": all_path, "candidates": cands_path, "breakouts": brk_path}
+
 
 
 
@@ -318,22 +344,31 @@ def main():
                         help="Distance to trigger to be considered 'near' (default: 0.02 = 2%).")
     parser.add_argument("--breakout_confirm_on", choices=["high","close"], default="high",
                         help="Define over-trigger by today's HIGH or CLOSE (default: high).")
+    parser.add_argument(
+    "--entry_extension_pct", type=float, default=0.02,
+    help="Max percent above trigger to allow entry; used to compute max_entry_price (default: 0.02 = 2%).")
+
+
 
     args = parser.parse_args()
 
     paths = run_scan(
-        watchlist_file=args.watchlist,
-        out_dir=args.outdir,
-        benchmark=args.benchmark,
-        rs_pctile_min=args.rs_pctile_min,
-        near_52w_max_gap=args.near_52w_max_gap,
-        pivot_tight_max_range=args.pivot_tight_max_range,
-        vol_contraction_max=args.vol_contraction_max,
-        vol_dryup_max_ratio=args.vol_dryup_max_ratio,
-        vol_breakout_mult=args.vol_breakout_mult,
-        near_trigger_pct=args.near_trigger_pct,
-        breakout_confirm_on=args.breakout_confirm_on,
-    )
+    watchlist_file=args.watchlist,
+    out_dir=args.outdir,
+    benchmark=args.benchmark,
+    rs_pctile_min=args.rs_pctile_min,
+    near_52w_max_gap=args.near_52w_max_gap,
+    pivot_tight_max_range=args.pivot_tight_max_range,
+    vol_contraction_max=args.vol_contraction_max,
+    vol_dryup_max_ratio=args.vol_dryup_max_ratio,
+    vol_breakout_mult=args.vol_breakout_mult,
+    near_trigger_pct=args.near_trigger_pct,
+    breakout_confirm_on=args.breakout_confirm_on,
+    entry_extension_pct=args.entry_extension_pct,   # ⬅️ new
+)
+
+
+
 
     print("Wrote:")
     for k, v in paths.items():
