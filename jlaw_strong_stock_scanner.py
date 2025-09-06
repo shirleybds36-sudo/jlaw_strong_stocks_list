@@ -236,15 +236,22 @@ def run_scan(watchlist_file: str,
              pivot_tight_max_range: float = 0.06,
              vol_contraction_max: float = 0.0,
              vol_dryup_max_ratio: float = 0.8,
-             # NEW knobs:
+             # NEW knobs for signals:
              vol_breakout_mult: float = 1.5,
              near_trigger_pct: float = 0.02,
              breakout_confirm_on: str = "high") -> Dict[str, str]:
 
     tickers = read_watchlist(watchlist_file)
-    # ... existing fetch/compute ...
-    metrics, _ = compute_metrics(data, [t for t in tickers_all if t != benchmark.upper()], benchmark.upper())
+    bench = benchmark.upper()
+    tickers_all = sorted(tickers + [bench]) if bench not in tickers else tickers
 
+    # ⬇️⬇️ REQUIRED: fetch prices into `data` before compute_metrics ⬇️⬇️
+    data = fetch_prices(tickers_all, period="420d", interval="1d")
+
+    # compute metrics for all names except the benchmark
+    metrics, _ = compute_metrics(data, [t for t in tickers_all if t != bench], bench)
+
+    # first-stage strict filter (unchanged)
     cands = filter_candidates(metrics,
                               rs_pctile_min=rs_pctile_min,
                               near_52w_max_gap=near_52w_max_gap,
@@ -252,16 +259,14 @@ def run_scan(watchlist_file: str,
                               vol_contraction_max=vol_contraction_max,
                               vol_dryup_max_ratio=vol_dryup_max_ratio)
 
-    # --- NEW: enrich candidates with signals ---
+    # --- Enrich candidates with over-line / volume flags and risk box ---
     if not cands.empty:
-        # basic derived columns
         cands = cands.copy()
         cands["trigger_price"] = cands["breakout_trigger"]
         cands["stop_suggest"] = cands["pivot_low7"]
         cands["risk_pct"] = (cands["trigger_price"] - cands["stop_suggest"]) / cands["trigger_price"]
         cands["dist_to_trigger_pct"] = (cands["trigger_price"] - cands["last_close"]) / cands["trigger_price"]
 
-        # over-line and volume-surge
         if breakout_confirm_on.lower() == "close":
             cands["over_trigger"] = cands["over_trigger_close"]
         else:
@@ -270,7 +275,6 @@ def run_scan(watchlist_file: str,
         cands["vol_surge_mult"] = cands["vol_today"] / cands["vol50_avg"]
         cands["vol_surge"] = cands["vol_surge_mult"] >= vol_breakout_mult
 
-        # label
         def _signal_row(r):
             if r["over_trigger"] and r["vol_surge"]:
                 return "BREAKOUT_CONFIRMED"
@@ -287,21 +291,14 @@ def run_scan(watchlist_file: str,
     stamp = datetime.now().strftime("%Y-%m-%d")
     all_path = os.path.join(out_dir, f"metrics_all_{stamp}.csv")
     cands_path = os.path.join(out_dir, f"candidates_{stamp}.csv")
+    brk_path = os.path.join(out_dir, f"breakouts_{stamp}.csv")
+
     metrics.to_csv(all_path, index=False)
-    if not cands.empty:
-        cands.to_csv(cands_path, index=False)
-    else:
-        # still write an empty header for consistency
-        cands.head(0).to_csv(cands_path, index=False)
+    (cands if not cands.empty else metrics.head(0)).to_csv(cands_path, index=False)
+    (cands.loc[cands["signal"] == "BREAKOUT_CONFIRMED"] if not cands.empty else metrics.head(0)).to_csv(brk_path, index=False)
 
-    # NEW: a separate file for已过线且放量的“确认突破”
-    confirmed_path = os.path.join(out_dir, f"breakouts_{stamp}.csv")
-    if not cands.empty:
-        cands.loc[cands["signal"] == "BREAKOUT_CONFIRMED"].to_csv(confirmed_path, index=False)
-    else:
-        pd.DataFrame().to_csv(confirmed_path, index=False)
+    return {"all": all_path, "candidates": cands_path, "breakouts": brk_path}
 
-    return {"all": all_path, "candidates": cands_path, "breakouts": confirmed_path}
 
 
 
