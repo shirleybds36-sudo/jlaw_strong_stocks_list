@@ -1,0 +1,35 @@
+metric,present_in,definition,formula_or_source,typical_thresholds,interpretation_and_usage
+ticker,both,Stock symbol (Yahoo format).,,,Identifier used across outputs.
+last_close,both,Most recent adjusted close price.,AdjClose[today],,Reference price for risk and distance calculations.
+r3,both,3-month absolute return.,AdjClose[t]/AdjClose[t-63]-1,,Momentum over ~63 trading days.
+r6,both,6-month absolute return.,AdjClose[t]/AdjClose[t-126]-1,,Medium-term momentum (~126 trading days).
+r12,both,12-month absolute return.,AdjClose[t]/AdjClose[t-252]-1,,Long-term momentum (~252 trading days).
+rs3,both,3-month excess return vs benchmark.,(1+r3)/(1+bench_r3)-1,> 0 indicates outperformance,Short-term relative strength.
+rs6,both,6-month excess return vs benchmark.,(1+r6)/(1+bench_r6)-1,> 0 preferred,Core weight in composite (50%).
+rs12,both,12-month excess return vs benchmark.,(1+r12)/(1+bench_r12)-1,> 0 preferred,Confirms sustained leadership.
+high52,both,52-week (252d) rolling max of adj close.,"max(AdjClose, window=252)",,Used to judge proximity to highs.
+near_52w_gap_pct,both,Percent below 52-week high.,(high52-last_close)/high52,≤ 0.15–0.20,Keeps focus on names near highs.
+pivot_tight_range_pct,both,7-day high-low range as % of price.,"(max(High,7)-min(Low,7))/last_close",≤ 0.05–0.08,VCP-style tightness; smaller = better.
+vol_contraction_score,both,"Slope of 20d ATR over ~90d, normalized by price.",slope(ATR20[last~90])/last_close,≤ 0 (contracting),Negative = volatility contracting.
+vol10_over_vol50,both,10-day avg volume / 50-day avg volume.,SMA10(Vol)/SMA50(Vol),≤ 0.8–0.9,Lower means supply/dry-up; look for later surge.
+breakout_trigger,both,20-day highest high; breakout trigger.,"max(High, window=20)",,Use as the ‘over-line’ price.
+rs_composite,both,Weighted composite of RS.,0.5*rs6 + 0.3*rs3 + 0.2*rs12,higher is stronger,Rank multiple horizons in one score.
+rs3_pctile,both,Percentile rank of rs3 within universe.,rank_pct(rs3),70/85/90+,Contextual strength among peers.
+rs6_pctile,both,Percentile rank of rs6.,rank_pct(rs6),70/85/90+,Main horizon for leadership.
+rs12_pctile,both,Percentile rank of rs12.,rank_pct(rs12),70/85/90+,Longer-term leadership confirmation.
+rs_composite_pctile,both,Percentile rank of rs_composite.,rank_pct(rs_composite),85–90+,Top decile indicates elite strength.
+vol_today,both,Today’s raw share volume.,Vol[today],,Used for surge check.
+vol50_avg,both,50-day avg share volume.,SMA50(Vol),,Baseline for volume surge.
+over_trigger_high,both,Did today’s HIGH clear trigger?,High[today] ≥ breakout_trigger,True/False,Intraday over-line check.
+over_trigger_close,both,Did today’s CLOSE clear trigger?,Close[today] ≥ breakout_trigger,True/False,Close-based confirmation (stricter).
+pivot_low7,both,7-day lowest low (pivot area low).,"min(Low,7)",,Reference for suggested stop.
+trigger_price,both,Suggested trigger price (copy of breakout_trigger).,breakout_trigger,,Entry only if price clears with volume.
+stop_suggest,both,Suggested stop (pivot low).,pivot_low7,,Invalidation line; tighten if pattern tightens.
+risk_pct,both,Relative risk box height.,(trigger_price-stop_suggest)/trigger_price,~0.03–0.08,Smaller = tighter setup; position sizing uses it.
+dist_to_trigger_pct,both,Distance below trigger.,(trigger_price-last_close)/trigger_price,≤ 0.02 near,How close price is to go-time. <0 means already above.
+over_trigger,both,Chosen over-line flag per --breakout_confirm_on.,over_trigger_high or over_trigger_close,True/False,Unified ‘over-line’ decision.
+vol_surge_mult,both,Volume surge multiple vs 50d avg.,Vol[today]/SMA50(Vol),≥ 1.5 (default),Breakout must be sponsored by volume.
+vol_surge,both,Pass surge threshold?,vol_surge_mult ≥ --vol_breakout_mult,True/False,Confirms demand on breakout.
+signal,both,State label for actionability.,Rule-based label,,BREAKOUT_CONFIRMED / OVER_TRIGGER_WEAK_VOLUME / WATCH_NEAR_TRIGGER / WATCH
+max_entry_price,breakouts,Max allowed entry above trigger.,trigger_price*(1+entry_extension_pct),default 2%,Avoid chasing too far beyond trigger.
+position_risk_$,breakouts,Per-share dollar risk.,risk_pct*last_close,contextual,Use with account risk to size position; alt: trigger-stop.
