@@ -338,7 +338,6 @@ def main():
         breakout_confirm_on=args.breakout_confirm_on,
     )
 
-    )
     print("Wrote:")
     for k, v in paths.items():
         print(f"  {k}: {v}")
