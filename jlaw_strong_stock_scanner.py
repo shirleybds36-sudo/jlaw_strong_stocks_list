@@ -129,8 +129,11 @@ def compute_metrics(data: pd.DataFrame, tickers: List[str], benchmark: str) -> T
         near_52w = (high52_latest - last_close) / high52_latest if high52_latest > 0 else np.nan
 
         # Tight pivot: last N days range divided by last_close <= threshold
+        # Tight pivot (last 7d range)
         N_TIGHT = 7
-        pivot_range = (df["High"].tail(N_TIGHT).max() - df["Low"].tail(N_TIGHT).min())
+        last7_high = float(df["High"].tail(N_TIGHT).max())
+        last7_low  = float(df["Low"].tail(N_TIGHT).min())
+        pivot_range = last7_high - last7_low
         pivot_tight = (pivot_range / last_close) if last_close > 0 else np.nan
 
         # ATR-based volatility contraction
@@ -154,13 +157,18 @@ def compute_metrics(data: pd.DataFrame, tickers: List[str], benchmark: str) -> T
         else:
             vol_contraction_score = np.nan
 
-        # Volume dry-up
+        # Volume stats
+        vol_today = float(df["Volume"].iloc[-1])
+        vol50_avg = float(df["Volume"].rolling(50).mean().iloc[-1])
         vol10 = df["Volume"].rolling(10).mean().iloc[-1]
         vol50 = df["Volume"].rolling(50).mean().iloc[-1]
         vol_dryup_ratio = vol10 / vol50 if vol50 and not math.isnan(vol50) else np.nan
 
-        # Breakout trigger: 20-day high
+        # Breakout trigger & over-trigger checks
         breakout_trigger = float(df["High"].rolling(20).max().iloc[-1])
+        hi_today = float(df["High"].iloc[-1])
+        over_trigger_high = hi_today >= breakout_trigger - 1e-9
+        over_trigger_close = last_close >= breakout_trigger - 1e-9
 
         rows.append({
             "ticker": t,
@@ -168,12 +176,20 @@ def compute_metrics(data: pd.DataFrame, tickers: List[str], benchmark: str) -> T
             "r3": r3_latest, "r6": r6_latest, "r12": r12_latest,
             "rs3": rs3, "rs6": rs6, "rs12": rs12,
             "high52": high52_latest,
-            "near_52w_gap_pct": near_52w,        # <= 0.15 preferred
-            "pivot_tight_range_pct": pivot_tight, # <= 0.05 preferred
-            "vol_contraction_score": vol_contraction_score,  # < 0 indicates contraction
-            "vol10_over_vol50": vol_dryup_ratio, # < 0.7 indicates dry-up
-            "breakout_trigger": breakout_trigger
+            "near_52w_gap_pct": near_52w,
+            "pivot_tight_range_pct": pivot_tight,
+            "vol_contraction_score": vol_contraction_score,
+            "vol10_over_vol50": vol_dryup_ratio,
+            "breakout_trigger": breakout_trigger,
+
+            # NEW fields used later for signals
+            "vol_today": vol_today,
+            "vol50_avg": vol50_avg,
+            "over_trigger_high": over_trigger_high,
+            "over_trigger_close": over_trigger_close,
+            "pivot_low7": last7_low
         })
+
 
     full = pd.DataFrame(rows)
 
@@ -219,20 +235,16 @@ def run_scan(watchlist_file: str,
              near_52w_max_gap: float = 0.15,
              pivot_tight_max_range: float = 0.06,
              vol_contraction_max: float = 0.0,
-             vol_dryup_max_ratio: float = 0.8) -> Dict[str, str]:
+             vol_dryup_max_ratio: float = 0.8,
+             # NEW knobs:
+             vol_breakout_mult: float = 1.5,
+             near_trigger_pct: float = 0.02,
+             breakout_confirm_on: str = "high") -> Dict[str, str]:
+
     tickers = read_watchlist(watchlist_file)
-    if benchmark.upper() not in tickers:
-        tickers_all = sorted(tickers + [benchmark.upper()])
-    else:
-        tickers_all = tickers
-
-    # Fetch data
-    data = fetch_prices(tickers_all, period="420d", interval="1d")
-
-    # Compute metrics (exclude benchmark from results)
+    # ... existing fetch/compute ...
     metrics, _ = compute_metrics(data, [t for t in tickers_all if t != benchmark.upper()], benchmark.upper())
 
-    # Filter candidates
     cands = filter_candidates(metrics,
                               rs_pctile_min=rs_pctile_min,
                               near_52w_max_gap=near_52w_max_gap,
@@ -240,16 +252,57 @@ def run_scan(watchlist_file: str,
                               vol_contraction_max=vol_contraction_max,
                               vol_dryup_max_ratio=vol_dryup_max_ratio)
 
-    # Output
+    # --- NEW: enrich candidates with signals ---
+    if not cands.empty:
+        # basic derived columns
+        cands = cands.copy()
+        cands["trigger_price"] = cands["breakout_trigger"]
+        cands["stop_suggest"] = cands["pivot_low7"]
+        cands["risk_pct"] = (cands["trigger_price"] - cands["stop_suggest"]) / cands["trigger_price"]
+        cands["dist_to_trigger_pct"] = (cands["trigger_price"] - cands["last_close"]) / cands["trigger_price"]
+
+        # over-line and volume-surge
+        if breakout_confirm_on.lower() == "close":
+            cands["over_trigger"] = cands["over_trigger_close"]
+        else:
+            cands["over_trigger"] = cands["over_trigger_high"]
+
+        cands["vol_surge_mult"] = cands["vol_today"] / cands["vol50_avg"]
+        cands["vol_surge"] = cands["vol_surge_mult"] >= vol_breakout_mult
+
+        # label
+        def _signal_row(r):
+            if r["over_trigger"] and r["vol_surge"]:
+                return "BREAKOUT_CONFIRMED"
+            if r["over_trigger"] and not r["vol_surge"]:
+                return "OVER_TRIGGER_WEAK_VOLUME"
+            if (not r["over_trigger"]) and (r["dist_to_trigger_pct"] <= near_trigger_pct):
+                return "WATCH_NEAR_TRIGGER"
+            return "WATCH"
+
+        cands["signal"] = cands.apply(_signal_row, axis=1)
+
+    # --- outputs ---
     os.makedirs(out_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d")
     all_path = os.path.join(out_dir, f"metrics_all_{stamp}.csv")
     cands_path = os.path.join(out_dir, f"candidates_{stamp}.csv")
-
     metrics.to_csv(all_path, index=False)
-    cands.to_csv(cands_path, index=False)
+    if not cands.empty:
+        cands.to_csv(cands_path, index=False)
+    else:
+        # still write an empty header for consistency
+        cands.head(0).to_csv(cands_path, index=False)
 
-    return {"all": all_path, "candidates": cands_path}
+    # NEW: a separate file for已过线且放量的“确认突破”
+    confirmed_path = os.path.join(out_dir, f"breakouts_{stamp}.csv")
+    if not cands.empty:
+        cands.loc[cands["signal"] == "BREAKOUT_CONFIRMED"].to_csv(confirmed_path, index=False)
+    else:
+        pd.DataFrame().to_csv(confirmed_path, index=False)
+
+    return {"all": all_path, "candidates": cands_path, "breakouts": confirmed_path}
+
 
 
 def main():
@@ -262,6 +315,12 @@ def main():
     parser.add_argument("--pivot_tight_max_range", type=float, default=0.06, help="Max 7-day range/price (e.g., 0.06 = 6%).")
     parser.add_argument("--vol_contraction_max", type=float, default=0.0, help="Max (i.e., most positive) ATR slope/price (<=0 means contracting).")
     parser.add_argument("--vol_dryup_max_ratio", type=float, default=0.8, help="Max vol10/vol50 (<=0.8 means volume dry-up).")
+    parser.add_argument("--vol_breakout_mult", type=float, default=1.5,
+                        help="Volume surge threshold as multiple of 50d avg volume (default: 1.5x).")
+    parser.add_argument("--near_trigger_pct", type=float, default=0.02,
+                        help="Distance to trigger to be considered 'near' (default: 0.02 = 2%).")
+    parser.add_argument("--breakout_confirm_on", choices=["high","close"], default="high",
+                        help="Define over-trigger by today's HIGH or CLOSE (default: high).")
 
     args = parser.parse_args()
 
@@ -274,6 +333,11 @@ def main():
         pivot_tight_max_range=args.pivot_tight_max_range,
         vol_contraction_max=args.vol_contraction_max,
         vol_dryup_max_ratio=args.vol_dryup_max_ratio,
+        vol_breakout_mult=args.vol_breakout_mult,
+        near_trigger_pct=args.near_trigger_pct,
+        breakout_confirm_on=args.breakout_confirm_on,
+    )
+
     )
     print("Wrote:")
     for k, v in paths.items():
