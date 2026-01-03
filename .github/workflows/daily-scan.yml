@@ -62,7 +62,7 @@ jobs:
             --vol_breakout_mult 1.5 \
             --near_trigger_pct 0.02 \
             --breakout_confirm_on high \
-            --entry_extension_pct 0.015
+            --entry_extension_pct 0.015 \
             --watchlist_out data/jlaw_watchlist.txt \
             --watchlist_source candidates \
             --watchlist_max 200 \
