@@ -1,9 +1,10 @@
-name: Daily US Watchlist + JLaw Scanner
+name: US Watchlist + JLaw Scanner
 
 on:
   schedule:
-    - cron: "0 15 * * *"      # 15:00 UTC (08:00 PT in DST)
+    - cron: "0 15 */2 * *"     # every 2 days at 15:00 UTC
   workflow_dispatch: {}
+
 
 permissions:
   contents: write
