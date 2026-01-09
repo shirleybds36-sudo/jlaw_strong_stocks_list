@@ -1,8 +1,5 @@
-# jlaw_watchlist trade_date=2026-01-06
+# jlaw_watchlist trade_date=2026-01-09
 # signals_keep=['WATCH_NEAR_TRIGGER', 'BREAKOUT_CONFIRMED']
 # max_tickers=200
-IVZ
-GM
 DG
-APH
-GS
+C
