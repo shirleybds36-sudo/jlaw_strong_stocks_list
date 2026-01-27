@@ -1,4 +1,4 @@
 GOOGL
-TSLA
 LLY
 XOM
+CVX
