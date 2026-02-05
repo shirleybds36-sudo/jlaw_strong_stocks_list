@@ -1,3 +1,1 @@
-# jlaw_watchlist trade_date=2026-02-02
-# signals_keep=['WATCH_NEAR_TRIGGER', 'BREAKOUT_CONFIRMED']
-# max_tickers=200
+# jlaw_watchlist (empty) trade_date=2026-02-05

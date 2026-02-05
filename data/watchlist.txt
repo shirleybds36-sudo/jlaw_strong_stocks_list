@@ -1,3 +1,4 @@
-GOOGL
 XOM
+AAPL
+PEP
 CVX
