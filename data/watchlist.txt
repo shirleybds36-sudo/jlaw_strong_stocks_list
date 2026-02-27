@@ -1,4 +1,5 @@
 XOM
-AAPL
-CVX
 KO
+CVX
+AAPL
+PEP
