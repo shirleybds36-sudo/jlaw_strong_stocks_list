@@ -1,4 +1,4 @@
 # jlaw_watchlist trade_date=2026-02-27
 # signals_keep=['WATCH_NEAR_TRIGGER', 'BREAKOUT_CONFIRMED']
 # max_tickers=200
-CVX
+XOM
