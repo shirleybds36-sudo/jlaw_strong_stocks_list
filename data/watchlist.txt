@@ -1,5 +1,4 @@
-LLY
 XOM
-KO
 CVX
+KO
 PEP
