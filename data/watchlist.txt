@@ -1,5 +1,3 @@
-XOM
 GOOGL
-CVX
 KO
 COST
