@@ -1,2 +1,3 @@
 GOOGL
 AVGO
+NVDA
