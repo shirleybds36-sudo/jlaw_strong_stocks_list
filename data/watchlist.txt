@@ -1,3 +1,4 @@
 GOOGL
+KO
 AVGO
 NVDA
