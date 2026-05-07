@@ -1,6 +1,3 @@
 GOOGL
-XOM
-CVX
 AVGO
 KO
-LLY
