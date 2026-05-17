@@ -2,4 +2,3 @@
 # signals_keep=['WATCH_NEAR_TRIGGER', 'BREAKOUT_CONFIRMED']
 # max_tickers=200
 GOOGL
-AVGO
