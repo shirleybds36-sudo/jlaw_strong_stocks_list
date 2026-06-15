@@ -1,3 +1,5 @@
 UNH
+GOOGL
 KO
+NVDA
 LLY
