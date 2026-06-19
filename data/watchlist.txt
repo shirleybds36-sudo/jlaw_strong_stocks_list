@@ -1,2 +1,4 @@
 UNH
+GOOGL
+NVDA
 KO
