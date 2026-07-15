@@ -1,3 +1,4 @@
+AAPL
 UNH
 KO
-AAPL
+GOOGL
