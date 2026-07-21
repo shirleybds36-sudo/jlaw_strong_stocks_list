@@ -3,4 +3,5 @@ AAPL
 KO
 XOM
 CVX
+LLY
 JPM
