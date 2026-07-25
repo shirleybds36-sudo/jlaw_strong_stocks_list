@@ -1,5 +1,5 @@
-AAPL
 UNH
 CVX
 XOM
 JPM
+KO
