@@ -1,5 +1,5 @@
 UNH
 KO
-JPM
 CVX
-AMZN
+JPM
+LLY
