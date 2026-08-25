@@ -1,4 +1,5 @@
-LLY
-AMZN
 V
-KO
+AMZN
+LLY
+JPM
+MA
