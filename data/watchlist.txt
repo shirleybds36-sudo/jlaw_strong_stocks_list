@@ -1,4 +1,3 @@
 MSFT
 NVDA
-LLY
 AAPL
