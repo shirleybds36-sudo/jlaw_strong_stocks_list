@@ -1,3 +1,4 @@
 MSFT
 NVDA
 AAPL
+V
