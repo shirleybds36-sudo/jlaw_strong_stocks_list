@@ -1,5 +1,7 @@
-MSFT
+LLY
+UNH
 AAPL
+MSFT
 V
 KO
-CVX
+MA
